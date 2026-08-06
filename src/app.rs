@@ -66,6 +66,9 @@ pub struct App {
     /// Most recent "Error"/"BridgeError" notice text, kept for display even
     /// while otherwise Connected (see apply_notice's "Error" handling).
     pub last_error: Option<String>,
+    /// The tunnel protocol actually in use (e.g. "TLS-OSSH",
+    /// "INPROXY-WEBRTC-OSSH"), from the "ActiveTunnel" notice.
+    pub active_protocol: Option<String>,
 
     /// Region codes Psiphon itself has reported as available (from the
     /// "AvailableEgressRegions" notice, which reflects the server entries
@@ -103,6 +106,7 @@ impl App {
             started_at: None,
             connected_at: None,
             last_error: None,
+            active_protocol: None,
             available_regions: Vec::new(),
             selected_region: None,
             region_picker_open: false,
@@ -175,6 +179,7 @@ impl App {
         self.http_port = None;
         self.tunnels_count = 0;
         self.last_error = None;
+        self.active_protocol = None;
     }
 
     pub fn mark_stopping(&mut self) {
@@ -206,7 +211,15 @@ impl App {
                     self.state = ConnectionState::Connected;
                 } else if self.state == ConnectionState::Connected {
                     self.state = ConnectionState::Reconnecting;
+                    self.active_protocol = None;
                 }
+            }
+            "ActiveTunnel" => {
+                self.active_protocol = notice
+                    .data
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
             }
             "ListeningSocksProxyPort" => {
                 self.socks_port = notice
@@ -270,6 +283,7 @@ impl App {
                 self.socks_port = None;
                 self.http_port = None;
                 self.tunnels_count = 0;
+                self.active_protocol = None;
             }
             "BridgeError" => {
                 // Always fatal to the current launch attempt - these come

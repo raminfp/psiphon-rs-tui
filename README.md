@@ -1,12 +1,12 @@
 # psiphon-tui
 
-یک TUI به زبان **Rust** (با [ratatui](https://ratatui.rs)) برای موتور [psiphon-tunnel-core](https://github.com/Psiphon-Labs/psiphon-tunnel-core) که همان ورودی خط‌فرمان مورد نظر را می‌پذیرد:
+A **Rust** TUI (built with [ratatui](https://ratatui.rs)) for the [psiphon-tunnel-core](https://github.com/Psiphon-Labs/psiphon-tunnel-core) engine, driven by the exact command-line shape this project was built around:
 
 ```
 psiphon -config psiphon.config -serverList server-list-standard.txt -dataRootDirectory data
 ```
 
-## معماری
+## Architecture
 
 ```
 ┌────────────────────┐   FFI (cgo)   ┌────────────────────────────────┐
@@ -19,46 +19,47 @@ psiphon -config psiphon.config -serverList server-list-standard.txt -dataRootDir
                                       └────────────────────────────────┘
 ```
 
-- **`psiphon-core/`** — کد اصلی Psiphon، به‌صورت کامل و بدون تغییر، از commit
+- **`psiphon-core/`** — the complete, unmodified Psiphon source, vendored from commit
   [`a70e0b58`](https://github.com/Psiphon-Labs/psiphon-tunnel-core/commit/a70e0b58c68377dcdfd7b081c0054bf9c2aae1c8)
-  گرفته شده (نگاه کنید به `VENDOR_COMMIT`).
-- **`psiphon-core/RustBridge/bridge.go`** — تنها فایل جدیدی که به سورس اضافه شده:
-  یک شیم cgo که با `go build -buildmode=c-shared` به `libpsiphon_bridge.so` تبدیل می‌شود. برخلاف
-  `ClientLibrary` استاندارد (که Blocking است و هیچ notice ای را بیرون نمی‌دهد)، این bridge:
-  - تونل را async استارت می‌کند (`PsiphonStart` سریع برمی‌گردد، نه بعد از اتصال کامل)،
-  - تمام notice های Psiphon (همان JSON eventهایی که کلاینت‌های Android/iOS/ConsoleClient تولید می‌کنند)
-    را در یک صف قرار می‌دهد که Rust با `PsiphonPollNotice` آن را می‌خواند — یعنی TUI وضعیت اتصال را
-    زنده (live) نشان می‌دهد، نه فقط یک نتیجهٔ نهایی.
-- **`src/`** — کراسیت Rust:
-  - `ffi.rs` — بایندینگ خام `extern "C"`
-  - `psiphon.rs` — wrapper امن + ترد poller پس‌زمینه
-  - `notice.rs` — پارس/نمایش انسانی notice های JSON
-  - `app.rs` — state machine وضعیت اتصال
-  - `cli.rs` — پارسر آرگومان‌ها (`-config` / `-serverList` / `-dataRootDirectory`، دقیقاً مثل ConsoleClient خود Psiphon)
-  - `ui.rs` / `main.rs` — رندر ratatui و event loop
-- **`build.rs`** — قبل از بیلد Rust، خودش `go build` را روی bridge اجرا می‌کند، `.so` را کنار باینری نهایی
-  کپی می‌کند و rpath می‌زند تا نیازی به `LD_LIBRARY_PATH` نباشد.
+  (see `VENDOR_COMMIT`).
+- **`psiphon-core/RustBridge/bridge.go`** — the only new file added to the source: a cgo shim built with
+  `go build -buildmode=c-shared` into `libpsiphon_bridge.so`. Unlike the stock `ClientLibrary` (which blocks
+  for the whole connection attempt and never surfaces notices), this bridge:
+  - starts the tunnel asynchronously (`PsiphonStart` returns quickly, not once connected),
+  - streams every Psiphon notice (the same JSON events Android/iOS/ConsoleClient clients produce) into a
+    queue that Rust drains with `PsiphonPollNotice` — so the TUI shows live connection status instead of a
+    single final result.
+- **`src/`** — the Rust crate:
+  - `ffi.rs` — raw `extern "C"` bindings
+  - `psiphon.rs` — safe wrapper + background poller thread
+  - `notice.rs` — parsing/human-readable rendering of notice JSON
+  - `app.rs` — connection-state machine
+  - `cli.rs` — argument parser (`-config` / `-serverList` / `-dataRootDirectory`, matching upstream
+    ConsoleClient's own flags)
+  - `ui.rs` / `main.rs` — ratatui rendering and the event loop
+- **`build.rs`** — runs `go build` on the bridge before the Rust build, copies the `.so` next to the final
+  binary, and sets an rpath so `LD_LIBRARY_PATH` isn't required.
 
-## پیش‌نیازها
+## Requirements
 
-- Go ≥ 1.26 (توسط `go.mod` upstream الزامی شده؛ اگر نصب نیست، toolchain به‌صورت خودکار دانلود می‌شود –
-  به بخش «شبکه‌های محدود» زیر نگاه کنید)
+- Go ≥ 1.26 (required by the upstream `go.mod`; if not installed, the toolchain is downloaded automatically
+  — see "Restricted networks" below)
 - Rust/Cargo (edition 2021)
-- روی لینوکس تست و تأیید شده (خروجی: `libpsiphon_bridge.so`)
+- Tested and confirmed on Linux (output: `libpsiphon_bridge.so`)
 
-### شبکه‌های محدود (GOPROXY)
+### Restricted networks (GOPROXY)
 
-اگر `proxy.golang.org` / `dl.google.com` در دسترس نبود (که در sandbox این پروژه هم همینطور بود)، از یک
-mirror استفاده کنید:
+If `proxy.golang.org` / `dl.google.com` aren't reachable (they weren't in this project's sandbox), use a
+mirror:
 
 ```bash
 export GOPROXY=https://goproxy.cn,direct
 export GOSUMDB=sum.golang.org
 ```
 
-`build.rs` همین مقدار را به‌صورت پیش‌فرض ست می‌کند، مگر اینکه شما خودتان `GOPROXY` را در محیط تعریف کرده باشید.
+`build.rs` sets this value by default unless you've already set `GOPROXY` yourself.
 
-## بیلد و اجرا
+## Build & run
 
 ```bash
 cargo build --release
@@ -68,109 +69,117 @@ cargo build --release
   -dataRootDirectory data
 ```
 
-(`cargo run --release -- -config ... -serverList ... -dataRootDirectory ...` هم کار می‌کند.)
+(`cargo run --release -- -config ... -serverList ... -dataRootDirectory ...` works too.)
 
-اولین بار که `cargo build` را اجرا کنید، `build.rs` خودش bridge را کامپایل می‌کند (حدود ۲۰-۳۰ ثانیه، عمدتاً
-دانلود toolchain Go در صورت نیاز). بیلدهای بعدی سریع‌اند مگر اینکه `bridge.go` تغییر کرده باشد.
+All three flags are also optional — if omitted, they default to `./psiphon.config`, `./server-list-standard.txt`,
+and `./data` in the current directory (the first two only if that file actually exists there), so plain
+`./target/release/psiphon` works once those files are in place.
 
-## ⚠️ نکتهٔ مهم: فایل کانفیگ و سرورلیست واقعی
+The first time you run `cargo build`, `build.rs` compiles the bridge itself (~20-30s, mostly downloading the
+Go toolchain if needed). Later builds are fast unless `bridge.go` changed.
 
-این پروژه **موتور واقعی** Psiphon را اجرا می‌کند، اما نمی‌تواند به‌جای شما مقادیر محرمانه‌ای مثل
-`PropagationChannelId`، `SponsorId` یا فهرست سرورهای واقعی (`TargetServerEntry`) را تولید کند — این‌ها
-توسط Psiphon Inc. به هر دیپلویمنت اختصاص داده می‌شوند و در سورس عمومی موجود نیستند.
+## ⚠️ Important: real config and server list
 
-دو گزینه دارید:
+This project runs the **real** Psiphon engine, but it cannot generate confidential values like
+`PropagationChannelId`, `SponsorId`, or a real server list (`TargetServerEntry`) for you — these are assigned
+by Psiphon Inc. per deployment and aren't available in the public source.
 
-1. **از psiphon.config واقعی خودتان استفاده کنید** (مثلاً از یک بیلد رسمی Android/Windows Psiphon که
-   دسترسی به آن دارید) و مسیرش را با `-config` بدهید.
-2. **یک سرور تست شخصی راه بیندازید** (کاملاً محلی، برای توسعه/تست):
+You have two options:
+
+1. **Use your own real `psiphon.config`** (e.g. extracted from an official Android/Windows Psiphon build you
+   have access to) and point `-config` at it.
+2. **Stand up your own throwaway test server** (fully local, for development/testing):
 
    ```bash
    cd psiphon-core/Server
    go build -o psiphond .
    ./psiphond -ipaddress 127.0.0.1 -protocol OSSH:9999 generate
-   # server-entry.dat و *.config تولید می‌شوند؛ محتوای server-entry.dat را
-   # در فیلد TargetServerEntry فایل client config قرار دهید (یا با -serverList بدهید)
+   # server-entry.dat and *.config are generated; put server-entry.dat's
+   # contents in the client config's TargetServerEntry field (or pass it via -serverList)
    ./psiphond run &
    ```
 
-   جزئیات کامل در `psiphon-core/README.md` بخش «Generate configuration data».
+   Full details in `psiphon-core/README.md`, "Generate configuration data" section.
 
-فایل‌های `psiphon.config.example` و `server-list-standard.txt.example` در ریشهٔ پروژه فقط نمونه‌ی ساختار
-هستند (با placeholder `FFFFFFFFFFFFFFFF`) — بدون مقادیر واقعی، برنامه بالا می‌آید، notice های زنده را
-نشان می‌دهد، اما به هیچ سروری وصل نمی‌شود (این رفتار تست شده و مورد انتظار است).
+`psiphon.config.example` and `server-list-standard.txt.example` at the project root are just structural
+samples (with `FFFFFFFFFFFFFFFF` placeholders) — without real values the app still comes up and shows live
+notices, but never connects to anything (this behavior is tested and expected).
 
-## کلیدهای TUI
+## TUI keybindings
 
-| کلید | عملکرد |
+| Key | Action |
 |---|---|
-| `s` | شروع/اتصال مجدد (اگر idle/stopped/error باشد) |
-| `x` | قطع اتصال بدون خروج از برنامه |
-| `r` | باز کردن پنل انتخاب کشور (region) |
-| `q` / `Esc` | خروج (با graceful shutdown) |
-| `↑`/`k`، `↓`/`j` | اسکرول لاگ (یا حرکت در لیست کشورها وقتی پنل `r` باز است) |
-| `PgUp`/`PgDn` | اسکرول سریع‌تر |
-| `End` | پرش به انتهای لاگ (live) |
-| `Enter` (در پنل `r`) | اعمال کشور انتخابی و ریست خودکار اتصال |
-| `Esc` (در پنل `r`) | بستن پنل بدون تغییر |
+| `s` | Start / reconnect (when idle/stopped/error) |
+| `x` | Disconnect without quitting |
+| `r` | Open the region (country) picker |
+| `q` / `Esc` | Quit (graceful shutdown) |
+| `Ctrl+C` | Quit (graceful shutdown) — raw mode disables the tty's normal Ctrl+C→SIGINT behavior, so this is handled explicitly |
+| `↑`/`k`, `↓`/`j` | Scroll the log (or move through the region list when the `r` panel is open) |
+| `PgUp`/`PgDn` | Scroll faster |
+| `End` | Jump to the live end of the log |
+| `Enter` (in the `r` panel) | Apply the selected region and auto-reconnect |
+| `Esc` (in the `r` panel) | Close the panel without changing anything |
 
-هنگام اجرا، برنامه بلافاصله (مثل CLI اصلی Psiphon) سعی می‌کند وصل شود؛ نیازی به فشردن `s` در ابتدا نیست.
+On launch, the app immediately attempts to connect (like the original CLI) — no need to press `s` first.
 
-### انتخاب کشور (Region)
+Even if the terminal itself is killed (window closed, SSH session dropped, `kill`/`SIGTERM`), a background
+signal watcher stops the tunnel and releases the datastore lock rather than leaving an orphaned process.
 
-با کلید `r` پنلی باز می‌شود که فقط کشورهایی را نشان می‌دهد که خودِ Psiphon از طریق notice واقعی
-`AvailableEgressRegions` گزارش کرده — یعنی صرفاً کشورهایی که واقعاً در بین server entry هایی که کلاینت
-شما (از `-serverList` یا اتصال‌های قبلی) دارد وجود دارند؛ لیست از پیش‌تعیین‌شده یا ساختگی نیست. تا وقتی
-حداقل یک بار موفق به دریافت entry از یک/چند کشور نشده باشید، فقط گزینهٔ «Any» دیده می‌شود.
+### Region selection
 
-با انتخاب یک کشور و زدن `Enter`:
-- اگر تونل روشن بود، اول به‌صورت خودکار قطع (`Stop`) و بعد از تأیید کامل خاموش‌شدن، با فیلتر `EgressRegion`
-  جدید دوباره وصل می‌شود (`state: Stopping → Stopped → Starting`، بدون نیاز به فشردن `s`).
-- اگر خاموش بود، بلافاصله با همان فیلتر تلاش برای اتصال شروع می‌شود.
+Pressing `r` opens a panel listing only the countries Psiphon itself has reported through the real
+`AvailableEgressRegions` notice — i.e. only regions that actually exist among the server entries your client
+(from `-serverList` or prior connections) has. The list is never hardcoded or guessed. Until you've
+successfully pulled in entries from at least one region, only "Any" is shown.
 
-کد کشورها (`US`, `DE`, ...) با نام کامل کشور (`United States`, `Germany`, ...) در `src/regions.rs` نمایش داده
-می‌شوند؛ این فایل فقط برای نمایش زیباست، منبع لیست انتخاب‌شدنی نیست.
+Selecting a region and pressing `Enter`:
+- If the tunnel was running, it's stopped automatically first; once shutdown is confirmed, it reconnects with
+  the new `EgressRegion` filter (`state: Stopping → Stopped → Starting`, no need to press `s`).
+- If it was already stopped, it immediately attempts to connect with the new filter.
 
-## تست بدون رابط گرافیکی
+Country codes (`US`, `DE`, ...) are shown with full country names (`United States`, `Germany`, ...) via
+`src/regions.rs` — that file is purely cosmetic, not the source of what's selectable.
 
-یک ابزار تشخیصی headless هم هست که همان مسیر FFI را امتحان می‌کند و خروجی notice ها را چاپ می‌کند
-(مفید برای دیباگ یک config واقعی قبل از اجرای کامل TUI):
+## Headless testing
+
+There's also a headless diagnostic tool that exercises the same FFI path and prints the notice stream
+(useful for debugging a real config before running the full TUI):
 
 ```bash
 cargo run --example smoke -- psiphon.config server-list-standard.txt data 15
 ```
 
-## پنل‌های TUI چه چیزی نشان می‌دهند
+## What the TUI panels show
 
-- **Proxy**: پورت‌های SOCKS/HTTP لوکال (از notice های `ListeningSocksProxyPort`/`ListeningHttpProxyPort`)
-  و تعداد تونل‌های فعال (`Tunnels`)
-- **Session**: ناحیهٔ کلاینت/سرور، حجم ترافیک (`TotalBytesTransferred`)، تعداد homepage های اسپانسر
-- **Log**: استریم زندهٔ همهٔ notice ها با رنگ‌بندی بر اساس severity (خطا/هشدار/اطلاعات)
+- **Proxy**: local SOCKS/HTTP proxy ports (from the `ListeningSocksProxyPort`/`ListeningHttpProxyPort`
+  notices), active tunnel count (`Tunnels`), and the most recent error (if any) — shown dimly if the tunnel is
+  otherwise healthy, in red only when the connection has actually failed.
+- **Session**: active tunnel protocol (`ActiveTunnel`), client/server region, traffic volume
+  (`TotalBytesTransferred`), sponsor homepage count.
+- **Log**: a live stream of every notice, colored by severity (error/warning/info).
 
-## بهبود مقاومت در برابر DPI (انتخاب پروتکل)
+## Improving DPI resistance (protocol selection)
 
-اگر پروتکل پیش‌فرض (اغلب OSSH خام) در شبکه‌تان شناسایی/مسدود می‌شود، اول ببینید سرورهای واقعی‌تان اصلاً چه
-پروتکل‌هایی را پشتیبانی می‌کنند — حدس نزنید. `server-list-standard.txt` هر خطش یک server entry هگزادسیمال
-است؛ با پکیج خودِ Psiphon (`psiphon-core/psiphon/common/protocol`, تابع `NewStreamingServerEntryDecoder` +
-`(*ServerEntry).SupportsProtocol`) می‌شود شمارش گرفت که چند سرور از هرکدام از این پروتکل‌ها پشتیبانی
-می‌کنند: `OSSH`، `TLS-OSSH`، `UNFRONTED-MEEK-HTTPS-OSSH`، `UNFRONTED-MEEK-SESSION-TICKET-OSSH`،
-`FRONTED-MEEK-*` (fronting از طریق CDN مثل Cloudflare — ممکن است صفر سرور آن را داشته باشد)، و
-`INPROXY-WEBRTC-OSSH` (جدیدترین و سخت‌ترین برای شناسایی — شبیه ترافیک تماس تصویری واقعی).
+If the default protocol (often raw OSSH) is being detected/blocked on your network, first find out what your
+actual servers support — don't guess. Each line of `server-list-standard.txt` is one hex-encoded server
+entry; using Psiphon's own package (`psiphon-core/psiphon/common/protocol`, `NewStreamingServerEntryDecoder` +
+`(*ServerEntry).SupportsProtocol`) you can count how many servers support each protocol: `OSSH`, `TLS-OSSH`,
+`UNFRONTED-MEEK-HTTPS-OSSH`, `UNFRONTED-MEEK-SESSION-TICKET-OSSH`, `FRONTED-MEEK-*` (CDN fronting, e.g. via
+Cloudflare — you may well have zero servers supporting this), and `INPROXY-WEBRTC-OSSH` (the newest and
+hardest to detect — looks like real video-call traffic).
 
-نکات مهمی که در عمل پیدا شد:
+Notable things found in practice:
 
-- کلیدهایی که در JSON کانفیگ ناشناخته باشند **بی‌صدا نادیده گرفته می‌شوند** (`psiphon.LoadConfig` از
-  `json.Unmarshal` ساده استفاده می‌کند، نه decoder سخت‌گیر) — یعنی یک تایپوی کوچک در اسم فیلد هیچ خطایی
-  نمی‌دهد و فقط بی‌اثر می‌ماند. قبل از اعتماد به یک فیلد کانفیگ، مطمئن شوید همان اسم دقیق در
-  `psiphon-core/psiphon/config.go` وجود دارد.
-- `INPROXY-WEBRTC-OSSH` (پروتکل WebRTC) نیاز به «broker specs» دارد که فقط از طریق **Tactics** (سیستم
-  تنظیم از راه دور خودِ Psiphon) به کلاینت می‌رسد؛ اگر `"DisableTactics": true` باشد، این پروتکل عملاً
-  همیشه رد می‌شود ولو این‌که سرورها پشتیبانی‌اش کنند (نگاه کنید به پیام
-  `"inproxy client: no broker specs and tactics disabled"` در `psiphon-core/psiphon/controller.go`).
-- برای اولویت‌دادن به پروتکل‌های مخفی‌تر بدون قفل‌شدن کامل روی آن‌ها (اگر هیچ‌کدام وصل نشدند)، از
-  `InitialLimitTunnelProtocols` + `InitialLimitTunnelProtocolsCandidateCount` استفاده کنید — فقط
-  N کاندیدای اول را به این پروتکل‌ها محدود می‌کند، بعدش `LimitTunnelProtocols` (که خالی/نامحدود می‌ماند)
-  اعمال می‌شود:
+- Unrecognized keys in the JSON config are **silently ignored** (`psiphon.LoadConfig` uses plain
+  `json.Unmarshal`, not a strict decoder) — a small typo in a field name produces no error, it just does
+  nothing. Before trusting a config field, confirm the exact name exists in `psiphon-core/psiphon/config.go`.
+- `INPROXY-WEBRTC-OSSH` (the WebRTC protocol) needs "broker specs", which only reach the client via
+  **Tactics** (Psiphon's own remote-tuning system); with `"DisableTactics": true`, this protocol is
+  effectively always rejected even when servers support it (see the
+  `"inproxy client: no broker specs and tactics disabled"` message in `psiphon-core/psiphon/controller.go`).
+- To prefer stealthier protocols without getting permanently stuck on them if none connect, use
+  `InitialLimitTunnelProtocols` + `InitialLimitTunnelProtocolsCandidateCount` — it restricts only the first N
+  candidates to these protocols, after which `LimitTunnelProtocols` (left empty/unrestricted) applies:
 
   ```json
   {
@@ -184,11 +193,10 @@ cargo run --example smoke -- psiphon.config server-list-standard.txt data 15
   }
   ```
 
-  این نمونه واقعاً روی یک لیست ۳۹۱-سروره تست شد: اتصال طی ~۲ ثانیه با `ActiveTunnel` روی `TLS-OSSH` برقرار
-  شد (به‌جای OSSH خام).
+  This exact setup was tested end-to-end against a real 391-server list: it connected in ~2 seconds with
+  `ActiveTunnel` reporting `TLS-OSSH` (instead of raw OSSH).
 
-## مجوز
+## License
 
-کد vendor‌شده در `psiphon-core` تحت GPLv3 (نگاه کنید به همان مسیر) از Psiphon Inc.
-است. کد Rust/bridge این پروژه هم به همین ترتیب باید GPLv3 در نظر گرفته شود چون به‌طور مستقیم به آن لینک
-می‌شود.
+The vendored code in `psiphon-core` is GPLv3 (see that directory) from Psiphon Inc. This project's
+Rust/bridge code should likewise be considered GPLv3, since it links directly against it.
