@@ -98,11 +98,17 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         line_kv("HTTP proxy", opt_port(app.http_port)),
         line_kv("Active tunnels", app.tunnels_count.to_string()),
     ];
-    if let ConnectionState::Failed(msg) = &app.state {
-        left.push(Line::from(Span::styled(
-            format!("Last error: {msg}"),
-            Style::default().fg(Color::Red),
-        )));
+    if let Some(msg) = &app.last_error {
+        // Red when it actually reflects the current (failed) state; a
+        // dimmer color when the tunnel is otherwise fine and this is just
+        // the most recent background hiccup (e.g. a secondary fetcher) for
+        // context - see app.rs's "Error" notice handling.
+        let style = if matches!(app.state, ConnectionState::Failed(_)) {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        left.push(Line::from(Span::styled(format!("Last error: {msg}"), style)));
     }
     frame.render_widget(
         Paragraph::new(left)
