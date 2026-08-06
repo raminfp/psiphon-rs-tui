@@ -147,6 +147,46 @@ cargo run --example smoke -- psiphon.config server-list-standard.txt data 15
 - **Session**: ناحیهٔ کلاینت/سرور، حجم ترافیک (`TotalBytesTransferred`)، تعداد homepage های اسپانسر
 - **Log**: استریم زندهٔ همهٔ notice ها با رنگ‌بندی بر اساس severity (خطا/هشدار/اطلاعات)
 
+## بهبود مقاومت در برابر DPI (انتخاب پروتکل)
+
+اگر پروتکل پیش‌فرض (اغلب OSSH خام) در شبکه‌تان شناسایی/مسدود می‌شود، اول ببینید سرورهای واقعی‌تان اصلاً چه
+پروتکل‌هایی را پشتیبانی می‌کنند — حدس نزنید. `server-list-standard.txt` هر خطش یک server entry هگزادسیمال
+است؛ با پکیج خودِ Psiphon (`psiphon-core/psiphon/common/protocol`, تابع `NewStreamingServerEntryDecoder` +
+`(*ServerEntry).SupportsProtocol`) می‌شود شمارش گرفت که چند سرور از هرکدام از این پروتکل‌ها پشتیبانی
+می‌کنند: `OSSH`، `TLS-OSSH`، `UNFRONTED-MEEK-HTTPS-OSSH`، `UNFRONTED-MEEK-SESSION-TICKET-OSSH`،
+`FRONTED-MEEK-*` (fronting از طریق CDN مثل Cloudflare — ممکن است صفر سرور آن را داشته باشد)، و
+`INPROXY-WEBRTC-OSSH` (جدیدترین و سخت‌ترین برای شناسایی — شبیه ترافیک تماس تصویری واقعی).
+
+نکات مهمی که در عمل پیدا شد:
+
+- کلیدهایی که در JSON کانفیگ ناشناخته باشند **بی‌صدا نادیده گرفته می‌شوند** (`psiphon.LoadConfig` از
+  `json.Unmarshal` ساده استفاده می‌کند، نه decoder سخت‌گیر) — یعنی یک تایپوی کوچک در اسم فیلد هیچ خطایی
+  نمی‌دهد و فقط بی‌اثر می‌ماند. قبل از اعتماد به یک فیلد کانفیگ، مطمئن شوید همان اسم دقیق در
+  `psiphon-core/psiphon/config.go` وجود دارد.
+- `INPROXY-WEBRTC-OSSH` (پروتکل WebRTC) نیاز به «broker specs» دارد که فقط از طریق **Tactics** (سیستم
+  تنظیم از راه دور خودِ Psiphon) به کلاینت می‌رسد؛ اگر `"DisableTactics": true` باشد، این پروتکل عملاً
+  همیشه رد می‌شود ولو این‌که سرورها پشتیبانی‌اش کنند (نگاه کنید به پیام
+  `"inproxy client: no broker specs and tactics disabled"` در `psiphon-core/psiphon/controller.go`).
+- برای اولویت‌دادن به پروتکل‌های مخفی‌تر بدون قفل‌شدن کامل روی آن‌ها (اگر هیچ‌کدام وصل نشدند)، از
+  `InitialLimitTunnelProtocols` + `InitialLimitTunnelProtocolsCandidateCount` استفاده کنید — فقط
+  N کاندیدای اول را به این پروتکل‌ها محدود می‌کند، بعدش `LimitTunnelProtocols` (که خالی/نامحدود می‌ماند)
+  اعمال می‌شود:
+
+  ```json
+  {
+    "InitialLimitTunnelProtocols": [
+      "INPROXY-WEBRTC-OSSH",
+      "UNFRONTED-MEEK-SESSION-TICKET-OSSH",
+      "UNFRONTED-MEEK-HTTPS-OSSH",
+      "TLS-OSSH"
+    ],
+    "InitialLimitTunnelProtocolsCandidateCount": 50
+  }
+  ```
+
+  این نمونه واقعاً روی یک لیست ۳۹۱-سروره تست شد: اتصال طی ~۲ ثانیه با `ActiveTunnel` روی `TLS-OSSH` برقرار
+  شد (به‌جای OSSH خام).
+
 ## مجوز
 
 کد vendor‌شده در `psiphon-core` تحت GPLv3 (نگاه کنید به همان مسیر) از Psiphon Inc.
