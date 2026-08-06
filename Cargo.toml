@@ -1,0 +1,26 @@
+[package]
+name = "psiphon-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Rust TUI for psiphon-tunnel-core, driven by -config/-serverList/-dataRootDirectory"
+
+[lib]
+name = "psiphon_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "psiphon"
+path = "src/main.rs"
+
+[[example]]
+name = "smoke"
+path = "examples/smoke.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3

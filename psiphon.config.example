@@ -1,0 +1,21 @@
+{
+    "//1": "Copy this file to psiphon.config and fill in real values before use.",
+    "//2": "PropagationChannelId and SponsorId are assigned by Psiphon Inc. per",
+    "//3": "deployment; the placeholders below will load but will not connect to",
+    "//4": "anything (no real servers are associated with them). See README.md",
+    "//5": "'Getting real connection data' for how to obtain working values, or",
+    "//6": "how to stand up your own throwaway psiphond test server.",
+
+    "PropagationChannelId": "FFFFFFFFFFFFFFFF",
+    "SponsorId": "FFFFFFFFFFFFFFFF",
+
+    "//7": "Ports are optional; 0 (default) means 'pick any free port', which",
+    "//8": "the TUI reads back from the ListeningSocksProxyPort/ListeningHttpProxyPort",
+    "//9": "notices and displays in the Proxy panel.",
+    "LocalSocksProxyPort": 0,
+    "LocalHttpProxyPort": 0,
+
+    "//10": "Diagnostic notices are forced on by the Rust bridge regardless of",
+    "//11": "this setting, to keep the TUI's log panel informative.",
+    "EmitDiagnosticNotices": true
+}

@@ -1,0 +1,7 @@
+/target
+/data
+*.so
+*.h
+psiphon.config
+server-list-standard.txt
+note.txt
