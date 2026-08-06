@@ -1,5 +1,7 @@
 # psiphon-tui
 
+![psiphon-tui screenshot](docs/screenshot.png)
+
 A **Rust** TUI (built with [ratatui](https://ratatui.rs)) for the [psiphon-tunnel-core](https://github.com/Psiphon-Labs/psiphon-tunnel-core) engine, driven by the exact command-line shape this project was built around:
 
 ```
