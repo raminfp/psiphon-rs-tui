@@ -34,7 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header
-            Constraint::Length(7), // stats
+            Constraint::Length(8), // stats
             Constraint::Min(5),    // log
             Constraint::Length(1), // footer
         ])
@@ -98,11 +98,17 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         line_kv("HTTP proxy", opt_port(app.http_port)),
         line_kv("Active tunnels", app.tunnels_count.to_string()),
     ];
-    if let ConnectionState::Failed(msg) = &app.state {
-        left.push(Line::from(Span::styled(
-            format!("Last error: {msg}"),
-            Style::default().fg(Color::Red),
-        )));
+    if let Some(msg) = &app.last_error {
+        // Red when it actually reflects the current (failed) state; a
+        // dimmer color when the tunnel is otherwise fine and this is just
+        // the most recent background hiccup (e.g. a secondary fetcher) for
+        // context - see app.rs's "Error" notice handling.
+        let style = if matches!(app.state, ConnectionState::Failed(_)) {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        left.push(Line::from(Span::styled(format!("Last error: {msg}"), style)));
     }
     frame.render_widget(
         Paragraph::new(left)
@@ -116,6 +122,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
         None => "Any".to_string(),
     };
     let right = vec![
+        line_kv("Protocol", app.active_protocol.clone().unwrap_or_else(|| "?".into())),
         line_kv("Client region", app.client_region.clone().unwrap_or_else(|| "?".into())),
         line_kv("Server region", app.server_region.clone().unwrap_or_else(|| "?".into())),
         line_kv("Region filter", format!("{region_filter}  (r to change)")),

@@ -1,7 +1,7 @@
 use psiphon_tui::app::{App, ConnectionState};
 use psiphon_tui::{cli, psiphon, ui};
 
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, ExecutableCommand};
 use ratatui::backend::CrosstermBackend;
@@ -44,6 +44,56 @@ fn main() {
     }
 }
 
+/// Spawns a dedicated thread that blocks waiting for SIGINT/SIGTERM/SIGHUP
+/// and, when one arrives, stops the tunnel and force-exits the whole
+/// process - independently of the render loop.
+///
+/// An earlier version of this used `signal_hook::flag` (just an AtomicBool
+/// checked once per render-loop iteration). That is NOT enough: the render
+/// loop spends most of its time inside `crossterm::event::poll`, which
+/// reads from the controlling tty. When the tty itself is gone - the
+/// terminal window was killed, the SSH session dropped, the tmux pane was
+/// torn down - that poll can end up never returning in a timely way, so the
+/// flag is never actually checked and the tunnel (plus its exclusive
+/// datastore lock) is orphaned indefinitely. Verified live: `kill -TERM` on
+/// a running instance, and killing its tmux pane out from under it, both
+/// left the process running with the flag-only approach.
+///
+/// This version sidesteps that: `Signals::forever()` blocks on the
+/// self-pipe signal-hook maintains internally, not on tty I/O, so it is
+/// unaffected by whatever state the terminal is in.
+fn spawn_shutdown_watcher() -> Result<(), std::io::Error> {
+    let mut signals = signal_hook::iterator::Signals::new([
+        signal_hook::consts::SIGINT,
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGHUP,
+    ])?;
+
+    std::thread::spawn(move || {
+        // Block until any one of the registered signals arrives.
+        let _ = signals.forever().next();
+
+        // Everything from here is best-effort: none of it may be allowed
+        // to skip the tunnel shutdown call below (see the writeln!/`?`
+        // reasoning in `run`).
+        let _ = disable_raw_mode();
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), "\nreceived shutdown signal, stopping tunnel…");
+        unsafe {
+            psiphon_tui::ffi::PsiphonStop();
+        }
+        let _ = writeln!(std::io::stdout(), "stopped.");
+
+        // The render loop's own thread may be stuck (see above) - don't
+        // wait for it, just end the process now that the tunnel is down.
+        std::process::exit(0);
+    });
+
+    Ok(())
+}
+
 fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new(
         args.config.clone(),
@@ -51,6 +101,14 @@ fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
         args.data_root_directory.clone(),
     );
     app.push_system("psiphon-tui starting — press 's' to (re)connect, 'q' to quit");
+
+    // Ensure a killed/dropped terminal (closed window, lost SSH session,
+    // `kill`, tmux pane torn down, ...) still stops the tunnel and releases
+    // the datastore lock, instead of leaving an orphaned background process.
+    // Note: this does NOT cover Ctrl+C while the TUI is running - raw mode
+    // disables the tty's ISIG, so Ctrl+C arrives as a normal keypress
+    // instead of SIGINT; that's handled explicitly in event_loop.
+    spawn_shutdown_watcher()?;
 
     let (controller, notice_rx) = psiphon::Controller::new();
 
@@ -65,17 +123,24 @@ fn run(args: cli::Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let result = event_loop(&mut terminal, &mut app, &controller, notice_rx);
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    // From here on, everything is best-effort: none of it may be allowed to
+    // skip the tunnel shutdown below via `?`. If the terminal/tty is
+    // already gone (killed window, dropped SSH session, tmux pane torn
+    // down, ...) these restore calls can themselves fail - that must not
+    // orphan the tunnel and its exclusive datastore lock forever. Same
+    // reasoning for using writeln!+ignore instead of println! (which
+    // panics on a write error) for the status messages below.
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
 
-    // Graceful shutdown: now that the terminal is restored, block (bounded)
-    // until the bridge confirms the tunnel is fully stopped.
-    if psiphon::Controller::is_running() {
-        println!("Stopping tunnel…");
-        controller.stop_blocking();
-        println!("Stopped.");
-    }
+    // stop_blocking() is documented safe to call even if nothing is
+    // running, so it's always called unconditionally here rather than
+    // guarded by an is_running() check that could itself be stale.
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stdout(), "Stopping tunnel…");
+    controller.stop_blocking();
+    let _ = writeln!(std::io::stdout(), "Stopped.");
 
     result
 }
@@ -132,6 +197,15 @@ fn event_loop(
         if event::poll(Duration::from_millis(100))? {
             if let CEvent::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                // Raw mode disables the tty's ISIG, so Ctrl+C arrives here
+                // as a normal keypress instead of a SIGINT - handle it
+                // explicitly, and let it override the region picker too
+                // (Ctrl+C should always mean "get me out", full stop).
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.should_quit = true;
                     continue;
                 }
 
